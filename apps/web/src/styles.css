@@ -1,0 +1,322 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+:root {
+  color-scheme: light;
+  --bg: #f2ede2;
+  --panel: #fbf8f1;
+  --panel-strong: #efe8db;
+  --text: #1f2b23;
+  --muted: #607365;
+  --border: rgba(31, 43, 35, 0.12);
+  --accent: #1e6f50;
+  --accent-soft: #d9eadf;
+  --warning: #ba5c12;
+  font-family: "IBM Plex Sans", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(30, 111, 80, 0.08), transparent 32%),
+    linear-gradient(180deg, #f5f1e8 0%, var(--bg) 100%);
+  color: var(--text);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: white;
+}
+
+textarea {
+  resize: vertical;
+}
+
+a {
+  color: var(--accent);
+}
+
+.app-shell {
+  padding: 2rem;
+}
+
+.app-header {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.app-header h1,
+.panel h2 {
+  margin: 0;
+  font-family: "Fraunces", serif;
+  font-weight: 600;
+}
+
+.app-header h1 {
+  font-size: clamp(2rem, 3vw, 3.6rem);
+  max-width: 900px;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.subtle-copy {
+  margin: 0;
+  max-width: 780px;
+  color: var(--muted);
+}
+
+.layout-grid {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: minmax(310px, 380px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.main-column,
+.stack-column {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.panel {
+  background: rgba(251, 248, 241, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 1.2rem;
+  box-shadow: 0 18px 60px rgba(63, 52, 38, 0.07);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.settings-panel,
+.detail-panel,
+.prompt-panel {
+  position: sticky;
+  top: 1rem;
+}
+
+.grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.filters-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+label {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+}
+
+small,
+.warning-text,
+.empty-state {
+  color: var(--muted);
+}
+
+.button-row {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.align-end {
+  justify-content: flex-end;
+}
+
+.primary-button,
+.secondary-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.8rem 1.15rem;
+  cursor: pointer;
+}
+
+.primary-button {
+  background: var(--accent);
+  color: white;
+}
+
+.secondary-button {
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.metric-grid > div {
+  background: var(--panel-strong);
+  border-radius: 18px;
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.metric-grid span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.metric-grid strong {
+  font-size: 1.05rem;
+}
+
+.detail-summary {
+  font-weight: 500;
+}
+
+.detail-section {
+  margin-top: 1rem;
+}
+
+.excerpt-card {
+  padding: 0.9rem;
+  border-radius: 18px;
+  background: var(--panel-strong);
+  margin-bottom: 0.7rem;
+}
+
+.excerpt-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 0.2rem;
+}
+
+.table-shell {
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th,
+td {
+  padding: 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(31, 43, 35, 0.08);
+  font-size: 0.92rem;
+}
+
+th {
+  background: #f9f5eb;
+  cursor: pointer;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr:hover {
+  background: #f5f9f5;
+}
+
+.token-pill {
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.token-pill.warning,
+.warning-item.warning {
+  background: rgba(186, 92, 18, 0.12);
+  color: var(--warning);
+}
+
+.warning-item.error {
+  color: #8b2f1f;
+  background: rgba(139, 47, 31, 0.1);
+}
+
+.warnings-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.warning-item {
+  padding: 0.8rem 1rem;
+  border-radius: 16px;
+}
+
+.results-grid {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: minmax(320px, 0.88fr) minmax(0, 1.12fr);
+}
+
+svg {
+  width: 100%;
+  height: auto;
+  border-radius: 24px;
+  background: #f6f4ec;
+}
+
+@media (max-width: 1200px) {
+  .layout-grid,
+  .results-grid,
+  .filters-grid,
+  .two,
+  .three,
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-panel,
+  .detail-panel,
+  .prompt-panel {
+    position: static;
+  }
+}
+

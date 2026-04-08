@@ -1,0 +1,18 @@
+{
+  "name": "weekly-social-update-builder",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.3",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @weekly/api --filter @weekly/web dev",
+    "test": "pnpm -r test",
+    "check": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.17",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  }
+}
