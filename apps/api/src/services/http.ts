@@ -3,6 +3,26 @@ export interface FetchJsonOptions {
   retries?: number;
 }
 
+function formatErrorBody(text: string): string | null {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(text) as { message?: string };
+    return payload.message ?? text;
+  } catch {
+    return text;
+  }
+}
+
+async function buildHttpError(response: Response, url: string, prefix = "HTTP"): Promise<Error> {
+  const body = formatErrorBody(await response.text().catch(() => ""));
+  const retryAfter = response.headers.get("retry-after");
+  const suffix = [body, retryAfter ? `retry after ${retryAfter}s` : null].filter(Boolean).join("; ");
+  return new Error(`${prefix} ${response.status} for ${url}${suffix ? `: ${suffix}` : ""}`);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -15,10 +35,10 @@ export async function fetchText(url: string, options: FetchJsonOptions = {}): Pr
     try {
       const response = await fetch(url, { headers: options.headers });
       if (response.status === 429 || response.status >= 500) {
-        throw new Error(`Transient response ${response.status} for ${url}`);
+        throw await buildHttpError(response, url, "Transient response");
       }
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${url}`);
+        throw await buildHttpError(response, url);
       }
       return await response.text();
     } catch (error) {
@@ -43,4 +63,3 @@ export async function fetchJson<T>(url: string, options: FetchJsonOptions = {}):
   });
   return JSON.parse(text) as T;
 }
-

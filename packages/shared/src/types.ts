@@ -9,7 +9,7 @@ export interface FetchWindow {
 }
 
 export interface SourceConfig {
-  githubRepos: string[];
+  githubTargets: string[];
   forums: string[];
 }
 
@@ -131,6 +131,7 @@ export interface ActivityItem {
   completedAt: string | null;
   latestActivityAt: string;
   linkedItems: LinkedItemRef[];
+  discussionTimeline: ActivityExcerpt[];
   excerpts: ActivityExcerpt[];
   metrics: ItemMetrics;
   events: ActivityEvent[];
@@ -182,4 +183,3 @@ export interface UpdateItemStateRequest {
 export interface PostItemRequest {
   datasetId: string;
 }
-

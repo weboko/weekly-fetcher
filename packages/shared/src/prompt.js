@@ -1,4 +1,4 @@
-import { clampText } from "./date";
+import { clampText, isWithinWindow } from "./date";
 export const UPDATE_PLACEHOLDER = "{{update_list}}";
 export function buildSummary(item) {
     const statusPrefix = item.status === "merged"
@@ -32,7 +32,54 @@ function excerptBlock(excerpts) {
         .map((excerpt) => `- ${excerpt.kind} by ${excerpt.author} (${excerpt.createdAt}): ${clampText(excerpt.body, 280)}`)
         .join("\n");
 }
-export function renderPromptItems(items) {
+function forumDiscussionBlock(item, fetchWindow) {
+    const timeline = item.discussionTimeline.length
+        ? item.discussionTimeline
+        : item.body
+            ? [{
+                    id: `${item.id}-body`,
+                    kind: "body",
+                    author: "unknown",
+                    body: item.body,
+                    createdAt: item.createdAt,
+                    reactionCount: 0,
+                    url: item.url,
+                }]
+            : [];
+    const bodyPost = timeline.find((entry) => entry.kind === "body");
+    const replies = timeline.filter((entry) => entry.kind !== "body");
+    const recentReplies = replies.slice(-3);
+    const selectedTimeline = isWithinWindow(item.createdAt, fetchWindow)
+        ? (bodyPost ? [bodyPost, ...recentReplies] : recentReplies)
+        : timeline;
+    if (!selectedTimeline.length) {
+        return "- Discussion text: none captured";
+    }
+    return [
+        "- Discussion text:",
+        ...selectedTimeline.map((entry) => `  [${entry.kind}] ${entry.body}`),
+    ].join("\n");
+}
+function itemPromptBlock(item, fetchWindow) {
+    const lines = [
+        `### ${item.title}`,
+        `- Container: ${sourceLabel(item)}`,
+        `- Source: ${item.source}`,
+        `- Status: ${item.status}`,
+        `- Activity window: ${item.activityWindow.activeStart} -> ${item.activityWindow.activeEnd}`,
+        `- Already shared: ${item.alreadyShared ? "yes" : "no"}`,
+        `- Link: ${item.url}`,
+        `- Summary: ${item.summary}`,
+    ];
+    if (item.source === "discourse" && item.type === "forum_topic") {
+        lines.push(forumDiscussionBlock(item, fetchWindow));
+        return lines.join("\n");
+    }
+    lines.push(`- Raw body excerpt: ${clampText(item.body, 500)}`);
+    lines.push(excerptBlock(item.excerpts.slice(0, 3)));
+    return lines.join("\n");
+}
+export function renderPromptItems(items, fetchWindow) {
     const groups = new Map();
     for (const item of items) {
         const key = groupKey(item);
@@ -52,25 +99,15 @@ export function renderPromptItems(items) {
             }
             return (left.state.selectionOrder ?? Number.MAX_SAFE_INTEGER) - (right.state.selectionOrder ?? Number.MAX_SAFE_INTEGER);
         })
-            .map((item) => [
-            `### ${item.title}`,
-            `- Container: ${sourceLabel(item)}`,
-            `- Source: ${item.source}`,
-            `- Status: ${item.status}`,
-            `- Activity window: ${item.activityWindow.activeStart} -> ${item.activityWindow.activeEnd}`,
-            `- Already shared: ${item.alreadyShared ? "yes" : "no"}`,
-            `- Summary: ${item.summary}`,
-            `- Raw body excerpt: ${clampText(item.body, 500)}`,
-            excerptBlock(item.excerpts.slice(0, 3)),
-        ].join("\n"))
+            .map((item) => itemPromptBlock(item, fetchWindow))
             .join("\n\n");
         return `${heading}\n\n${body}`;
     })
         .join("\n\n");
 }
-export function fillPromptTemplate(template, items) {
+export function fillPromptTemplate(template, items, fetchWindow) {
     const normalizedTemplate = template.includes(UPDATE_PLACEHOLDER)
         ? template
         : `${template.trim()}\n\n${UPDATE_PLACEHOLDER}`;
-    return normalizedTemplate.replace(UPDATE_PLACEHOLDER, renderPromptItems(items));
+    return normalizedTemplate.replace(UPDATE_PLACEHOLDER, renderPromptItems(items, fetchWindow));
 }

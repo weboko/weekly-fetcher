@@ -1,4 +1,4 @@
-import { fillPromptTemplate, type ActivityItem } from "@weekly/shared";
+import { fillPromptTemplate, type ActivityItem, type FetchWindow } from "@weekly/shared";
 import { useEffect, useMemo, useState } from "react";
 
 import { estimateTokens } from "../lib/token";
@@ -7,10 +7,11 @@ interface PromptPanelProps {
   template: string;
   selectedItems: ActivityItem[];
   tokenLimit: number;
+  fetchWindow: FetchWindow;
 }
 
-export function PromptPanel({ template, selectedItems, tokenLimit }: PromptPanelProps) {
-  const prompt = useMemo(() => fillPromptTemplate(template, selectedItems), [selectedItems, template]);
+export function PromptPanel({ template, selectedItems, tokenLimit, fetchWindow }: PromptPanelProps) {
+  const prompt = useMemo(() => fillPromptTemplate(template, selectedItems, fetchWindow), [fetchWindow, selectedItems, template]);
   const [tokens, setTokens] = useState(0);
 
   useEffect(() => {

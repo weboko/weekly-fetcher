@@ -15,8 +15,14 @@ export async function registerRoutes(app: FastifyInstance, db: SqliteDatabase) {
   });
 
   app.post<{ Body: FetchRequest }>("/api/fetch", async (request, reply) => {
-    const dataset = await fetchDataset(db, request.body);
-    return reply.send({ dataset });
+    try {
+      const dataset = await fetchDataset(db, request.body);
+      return reply.send({ dataset });
+    } catch (error) {
+      return reply.code(500).send({
+        message: error instanceof Error ? error.message : "Dataset fetch failed",
+      });
+    }
   });
 
   app.get<{ Params: { datasetId: string } }>("/api/datasets/:datasetId", async (request, reply) => {
@@ -46,4 +52,3 @@ export async function registerRoutes(app: FastifyInstance, db: SqliteDatabase) {
     return reply.send({ dataset });
   });
 }
-

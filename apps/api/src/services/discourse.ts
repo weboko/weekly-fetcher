@@ -1,4 +1,4 @@
-import { clampText, isWithinWindow, type ActivityEvent, type ActivityExcerpt, type ActivityItem, type DatasetWarning, type FetchWindow } from "@weekly/shared";
+import { isWithinWindow, type ActivityEvent, type ActivityExcerpt, type ActivityItem, type DatasetWarning, type FetchWindow } from "@weekly/shared";
 import { XMLParser } from "fast-xml-parser";
 import { randomUUID } from "node:crypto";
 
@@ -33,14 +33,23 @@ interface DiscourseTopicResponse {
   like_count: number;
   posts_count: number;
   post_stream: {
-    posts: Array<{
-      id: number;
-      username: string;
-      created_at: string;
-      cooked: string;
-      actions_summary?: Array<{ id: number; count: number }>;
-    }>;
+    stream?: number[];
+    posts: DiscoursePost[];
   };
+}
+
+interface DiscoursePostsResponse {
+  post_stream: {
+    posts: DiscoursePost[];
+  };
+}
+
+interface DiscoursePost {
+  id: number;
+  username: string;
+  created_at: string;
+  cooked: string;
+  actions_summary?: Array<{ id: number; count: number }>;
 }
 
 export interface DiscourseAdapterResult {
@@ -49,21 +58,83 @@ export interface DiscourseAdapterResult {
 }
 
 function stripHtml(html: string): string {
-  return clampText(html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " "), 1200);
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeForumName(url: string): string {
   return new URL(url).host;
 }
 
-function normalizeReply(post: DiscourseTopicResponse["post_stream"]["posts"][number], kind: ActivityExcerpt["kind"]): ActivityExcerpt {
+function buildDiscourseExcerptId(forumBase: string, postId: number): string {
+  return `discourse:${forumBase}:post:${postId}`;
+}
+
+function normalizeReply(
+  forumBase: string,
+  post: DiscoursePost,
+  kind: ActivityExcerpt["kind"],
+): ActivityExcerpt {
   return {
-    id: String(post.id),
+    id: buildDiscourseExcerptId(forumBase, post.id),
     kind,
     author: post.username,
     body: stripHtml(post.cooked),
     createdAt: post.created_at,
     reactionCount: post.actions_summary?.reduce((sum, action) => sum + action.count, 0) ?? 0,
+  };
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    groups.push(items.slice(index, index + size));
+  }
+  return groups;
+}
+
+async function fetchTopicPosts(
+  baseUrl: string,
+  topicId: number,
+): Promise<DiscourseTopicResponse> {
+  const detail = await fetchJson<DiscourseTopicResponse>(`${baseUrl}/t/${topicId}.json?print=true`);
+  const stream = detail.post_stream.stream ?? detail.post_stream.posts.map((post) => post.id);
+  const existingIds = new Set(detail.post_stream.posts.map((post) => post.id));
+  const missingIds = stream.filter((postId) => !existingIds.has(postId));
+
+  if (!missingIds.length || detail.post_stream.posts.length >= detail.posts_count) {
+    return detail;
+  }
+
+  const additionalPosts = await Promise.all(
+    chunk(missingIds, 20).map(async (postIds) => {
+      const params = new URLSearchParams();
+      for (const postId of postIds) {
+        params.append("post_ids[]", String(postId));
+      }
+      const response = await fetchJson<DiscoursePostsResponse>(`${baseUrl}/t/${topicId}/posts.json?${params.toString()}`);
+      return response.post_stream.posts;
+    }),
+  );
+
+  const postMap = new Map<number, DiscoursePost>();
+  for (const post of detail.post_stream.posts) {
+    postMap.set(post.id, post);
+  }
+  for (const post of additionalPosts.flat()) {
+    postMap.set(post.id, post);
+  }
+
+  return {
+    ...detail,
+    post_stream: {
+      ...detail.post_stream,
+      stream,
+      posts: stream.map((postId) => postMap.get(postId)).filter((post): post is DiscoursePost => Boolean(post)),
+    },
   };
 }
 
@@ -143,9 +214,13 @@ export async function fetchDiscourseForumActivity(forumUrl: string, window: Fetc
 
   for (const topic of topics) {
     try {
-      const detail = await fetchJson<DiscourseTopicResponse>(`${baseUrl}/t/${topic.id}.json`);
+      const detail = await fetchTopicPosts(baseUrl, topic.id);
       const [firstPost, ...replies] = detail.post_stream.posts;
-      const normalizedReplies = replies.map((reply) => normalizeReply(reply, "reply"));
+      const discussionTimeline = [
+        ...(firstPost ? [normalizeReply(baseUrl, firstPost, "body")] : []),
+        ...replies.map((reply) => normalizeReply(baseUrl, reply, "reply")),
+      ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      const normalizedReplies = discussionTimeline.filter((entry) => entry.kind === "reply");
       const events: ActivityEvent[] = [
         { id: `${topic.id}-created`, type: "created", createdAt: detail.created_at },
         ...normalizedReplies.map((reply) => ({
@@ -175,6 +250,7 @@ export async function fetchDiscourseForumActivity(forumUrl: string, window: Fetc
         completedAt: null,
         latestActivityAt: detail.last_posted_at,
         linkedItems: [],
+        discussionTimeline,
         excerpts: normalizedReplies.sort((left, right) => right.reactionCount - left.reactionCount || right.createdAt.localeCompare(left.createdAt)).slice(0, 3),
         metrics: {
           commentsCount: detail.reply_count,
@@ -215,6 +291,7 @@ export async function fetchDiscourseForumActivity(forumUrl: string, window: Fetc
         completedAt: null,
         latestActivityAt: topic.lastPostedAt,
         linkedItems: [],
+        discussionTimeline: [],
         excerpts: [],
         metrics: {
           commentsCount: topic.replyCount,
@@ -245,4 +322,3 @@ export async function fetchDiscourseForumActivity(forumUrl: string, window: Fetc
 
   return { items, warnings };
 }
-

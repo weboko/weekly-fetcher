@@ -1,18 +1,12 @@
-import { buildSummary, computeScores, createDefaultFetchWindow, DEFAULT_SCORING_WEIGHTS, type ActivityItem, type AppSettings, type DatasetRecord, type FetchWindow, type ItemState, type PostItemRequest, type ScoringWeights } from "@weekly/shared";
+import { buildSummary, computeScores, createDefaultAppSettings, normalizeAppSettings, normalizeSourceConfig, type ActivityItem, type AppSettings, type DatasetRecord, type FetchWindow, type ItemState, type PostItemRequest, type ScoringWeights } from "@weekly/shared";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { SqliteDatabase } from "../db";
 import { computeActivityWindow, isReactivated, type PostedMarker } from "./reactivation";
 
 const DEFAULT_SETTINGS: AppSettings = {
-  sourceConfig: {
-    githubRepos: [],
-    forums: ["https://forum.research.logos.co/", "https://forum.logos.co/"],
-  },
+  ...createDefaultAppSettings(),
   promptTemplate: `Create a weekly social update based on the following items.\n\n{{update_list}}`,
-  scoringWeights: DEFAULT_SCORING_WEIGHTS,
-  tokenLimit: 18000,
-  fetchWindow: createDefaultFetchWindow(),
 };
 
 function rowToState(row: Record<string, unknown> | undefined): ItemState {
@@ -37,18 +31,19 @@ function rowToState(row: Record<string, unknown> | undefined): ItemState {
 
 export function buildCacheKey(window: FetchWindow, sourceConfig: AppSettings["sourceConfig"]): string {
   return createHash("sha256")
-    .update(JSON.stringify({ window, sourceConfig }))
+    .update(JSON.stringify({ window, sourceConfig: normalizeSourceConfig(sourceConfig) }))
     .digest("hex");
 }
 
 export function getSettings(db: SqliteDatabase): AppSettings {
   const row = db.prepare("SELECT json FROM settings WHERE id = 1").get() as { json: string } | undefined;
-  return row ? (JSON.parse(row.json) as AppSettings) : DEFAULT_SETTINGS;
+  return row ? normalizeAppSettings(JSON.parse(row.json) as AppSettings) : DEFAULT_SETTINGS;
 }
 
 export function saveSettings(db: SqliteDatabase, settings: AppSettings): AppSettings {
-  db.prepare("INSERT INTO settings (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json").run(JSON.stringify(settings));
-  return settings;
+  const normalizedSettings = normalizeAppSettings(settings);
+  db.prepare("INSERT INTO settings (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json").run(JSON.stringify(normalizedSettings));
+  return normalizedSettings;
 }
 
 export function getLatestPostedMarker(db: SqliteDatabase, itemKey: string): PostedMarker | null {
@@ -115,7 +110,7 @@ export function replaceDataset(db: SqliteDatabase, dataset: DatasetRecord): Data
     for (const item of dataset.items) {
       insertItem.run(item.id, dataset.id, item.itemKey, JSON.stringify({ ...item, excerpts: undefined, state: undefined }));
       item.excerpts.forEach((excerpt, index) => {
-        insertExcerpt.run(excerpt.id, item.id, excerpt.kind, index, JSON.stringify(excerpt));
+        insertExcerpt.run(`${item.id}:${excerpt.id}`, item.id, excerpt.kind, index, JSON.stringify(excerpt));
       });
       insertState.run(
         item.id,
@@ -149,6 +144,7 @@ export function inflateDataset(db: SqliteDatabase, row: Record<string, string>):
 
     return {
       ...item,
+      discussionTimeline: item.discussionTimeline ?? [],
       excerpts: excerpts.map((excerptRow) => JSON.parse(excerptRow.json)),
       state: rowToState(stateMap.get(itemRow.id)),
       alreadyShared: Boolean(getLatestPostedMarker(db, item.itemKey)),
@@ -160,7 +156,7 @@ export function inflateDataset(db: SqliteDatabase, row: Record<string, string>):
     cacheKey: row.cache_key,
     createdAt: row.created_at,
     fetchWindow: JSON.parse(row.fetch_window_json),
-    sourceConfig: JSON.parse(row.source_config_json),
+    sourceConfig: normalizeSourceConfig(JSON.parse(row.source_config_json) as AppSettings["sourceConfig"]),
     scoringWeights: JSON.parse(row.scoring_weights_json),
     warnings: JSON.parse(row.warnings_json),
     items,
@@ -240,12 +236,14 @@ export function createEmptyDatasetRecord(
   sourceConfig: AppSettings["sourceConfig"],
   scoringWeights: ScoringWeights,
 ): DatasetRecord {
+  const normalizedSourceConfig = normalizeSourceConfig(sourceConfig);
+
   return {
     id: randomUUID(),
-    cacheKey: buildCacheKey(fetchWindow, sourceConfig),
+    cacheKey: buildCacheKey(fetchWindow, normalizedSourceConfig),
     createdAt: new Date().toISOString(),
     fetchWindow,
-    sourceConfig,
+    sourceConfig: normalizedSourceConfig,
     scoringWeights,
     warnings: [],
     items: [],

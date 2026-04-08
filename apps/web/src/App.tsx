@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { createDefaultFetchWindow, DEFAULT_SCORING_WEIGHTS, type ActivityItem, type AppSettings, type DatasetRecord } from "@weekly/shared";
+import { createDefaultAppSettings, type ActivityItem, type AppSettings, type DatasetRecord } from "@weekly/shared";
 import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 
 import { ChartCard } from "./components/ChartCard";
@@ -12,16 +12,7 @@ import { fetchDataset, getDataset, getSettings, patchItemState, postItem, saveSe
 const LAST_DATASET_KEY = "weekly:lastDatasetId";
 
 function defaultSettings(): AppSettings {
-  return {
-    sourceConfig: {
-      githubRepos: [],
-      forums: ["https://forum.research.logos.co/", "https://forum.logos.co/"],
-    },
-    promptTemplate: `Create a weekly social update prompt with the items below.\n\n{{update_list}}`,
-    scoringWeights: DEFAULT_SCORING_WEIGHTS,
-    tokenLimit: 18000,
-    fetchWindow: createDefaultFetchWindow(),
-  };
+  return createDefaultAppSettings();
 }
 
 function containerLabel(item: ActivityItem): string {
@@ -335,6 +326,7 @@ export function App() {
                 template={(settingsQuery.data ?? defaultSettings()).promptTemplate}
                 selectedItems={selectedItems}
                 tokenLimit={(settingsQuery.data ?? defaultSettings()).tokenLimit}
+                fetchWindow={dataset?.fetchWindow ?? (settingsQuery.data ?? defaultSettings()).fetchWindow}
               />
               <div className="button-row align-end">
                 <button className="primary-button" disabled={!selectedItems.length || isPending} onClick={() => void persistGenerated()}>
@@ -349,4 +341,3 @@ export function App() {
     </main>
   );
 }
-

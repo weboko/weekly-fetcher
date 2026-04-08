@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createDefaultAppSettings } from "@weekly/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChartCard } from "./components/ChartCard";
 import { DetailPanel } from "./components/DetailPanel";
+import { SettingsForm } from "./components/SettingsForm";
+
+afterEach(() => {
+  cleanup();
+});
 
 const item = {
   id: "1",
@@ -28,6 +34,7 @@ const item = {
   completedAt: "2026-04-02T00:00:00.000Z",
   latestActivityAt: "2026-04-02T00:00:00.000Z",
   linkedItems: [],
+  discussionTimeline: [],
   excerpts: [],
   metrics: {
     commentsCount: 0,
@@ -71,5 +78,28 @@ describe("ui components", () => {
   it("renders the chart title", () => {
     render(<ChartCard items={[item]} />);
     expect(screen.getByLabelText("Weekly activity chart")).toBeInTheDocument();
+  });
+
+  it("validates GitHub token presence for GitHub targets", () => {
+    const onFetch = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SettingsForm
+        initialSettings={createDefaultAppSettings(new Date("2026-04-08T00:00:00.000Z"))}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onFetch={onFetch}
+        isFetching={false}
+      />,
+    );
+
+    fireEvent.change(screen.getAllByRole("textbox")[0], {
+      target: { value: "logos/weekly-fetcher\norg:logos" },
+    });
+    fireEvent.click(screen.getByText("Fetch weekly activity"));
+
+    expect(screen.getByText("GitHub targets require a GitHub token for fetches.")).toBeInTheDocument();
+    expect(screen.getByText("owner/repo", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("org:owner", { selector: "code" })).toBeInTheDocument();
+    expect(onFetch).not.toHaveBeenCalled();
   });
 });

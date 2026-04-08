@@ -11,13 +11,30 @@ interface SettingsFormProps {
 export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: SettingsFormProps) {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [githubToken, setGithubToken] = useState("");
+  const [fetchError, setFetchError] = useState("");
 
   useEffect(() => {
     setSettings(initialSettings);
+    setFetchError("");
   }, [initialSettings]);
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     setSettings((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleFetch() {
+    setFetchError("");
+
+    if (settings.sourceConfig.githubTargets.length > 0 && !githubToken.trim()) {
+      setFetchError("GitHub targets require a GitHub token for fetches.");
+      return;
+    }
+
+    try {
+      await onFetch(settings, githubToken.trim());
+    } catch (error) {
+      setFetchError(error instanceof Error ? error.message : "Fetch failed");
+    }
   }
 
   return (
@@ -33,20 +50,21 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
       </div>
 
       <label>
-        GitHub repositories
+        GitHub targets
         <textarea
-          value={settings.sourceConfig.githubRepos.join("\n")}
+          value={settings.sourceConfig.githubTargets.join("\n")}
           onChange={(event) =>
             update("sourceConfig", {
               ...settings.sourceConfig,
-              githubRepos: event.target.value
+              githubTargets: event.target.value
                 .split("\n")
                 .map((value) => value.trim())
                 .filter(Boolean),
             })
           }
-          placeholder="owner/repo"
+          placeholder={"owner/repo\norg:owner"}
         />
+        <small>One per line. Use <code>owner/repo</code> for a single repo or <code>org:owner</code> for all active public repos in an organization.</small>
       </label>
 
       <label>
@@ -215,10 +233,14 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
         <input
           type="password"
           value={githubToken}
-          onChange={(event) => setGithubToken(event.target.value)}
-          placeholder="Used for the next fetch only"
+          onChange={(event) => {
+            setGithubToken(event.target.value);
+            setFetchError("");
+          }}
+          placeholder="Required for GitHub fetches; used for the next fetch only"
         />
       </label>
+      {fetchError ? <p className="warning-text">{fetchError}</p> : null}
 
       <div className="button-row">
         <button
@@ -236,11 +258,10 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
         <button className="secondary-button" onClick={() => void onSave(settings)}>
           Save settings
         </button>
-        <button className="primary-button" disabled={isFetching} onClick={() => void onFetch(settings, githubToken)}>
+        <button className="primary-button" disabled={isFetching} onClick={() => void handleFetch()}>
           {isFetching ? "Fetching…" : "Fetch weekly activity"}
         </button>
       </div>
     </section>
   );
 }
-

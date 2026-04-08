@@ -77,10 +77,33 @@ interface GitHubTimelineEvent {
   };
 }
 
+interface GitHubOrgRepoListEntry {
+  full_name: string;
+  private: boolean;
+  fork: boolean;
+  archived: boolean;
+}
+
 export interface GitHubAdapterResult {
   items: Array<Omit<ActivityItem, "score" | "summary" | "alreadyShared" | "reactivated" | "activityWindow">>;
   warnings: DatasetWarning[];
 }
+
+export type GitHubTarget =
+  | {
+      kind: "repo";
+      raw: string;
+      owner: string;
+      repo: string;
+      repoFullName: string;
+    }
+  | {
+      kind: "org";
+      raw: string;
+      org: string;
+    };
+
+const GITHUB_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function githubHeaders(token?: string): Record<string, string> {
   return token
@@ -95,6 +118,39 @@ function githubHeaders(token?: string): Record<string, string> {
 
 function shouldStopPaging(updatedAt: string, window: FetchWindow): boolean {
   return new Date(updatedAt).getTime() < new Date(`${window.startDate}T00:00:00Z`).getTime();
+}
+
+export function parseGitHubTarget(target: string): GitHubTarget | null {
+  const normalized = target.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith("org:")) {
+    const org = normalized.slice(4).trim();
+    if (!org || org.includes("/") || !GITHUB_SEGMENT_PATTERN.test(org)) {
+      return null;
+    }
+
+    return {
+      kind: "org",
+      raw: normalized,
+      org,
+    };
+  }
+
+  const [owner, repo, ...rest] = normalized.split("/");
+  if (!owner || !repo || rest.length > 0 || !GITHUB_SEGMENT_PATTERN.test(owner) || !GITHUB_SEGMENT_PATTERN.test(repo)) {
+    return null;
+  }
+
+  return {
+    kind: "repo",
+    raw: normalized,
+    owner,
+    repo,
+    repoFullName: `${owner}/${repo}`,
+  };
 }
 
 export function extractTextualLinks(text: string, owner: string, repo: string): string[] {
@@ -134,9 +190,22 @@ function pickStatus(detail: GitHubIssueDetail, isPullRequest: boolean): string {
   return "closed";
 }
 
-function normalizeComment(comment: GitHubComment, kind: ActivityExcerpt["kind"]): ActivityExcerpt {
+function buildGitHubExcerptId(
+  owner: string,
+  repo: string,
+  sourceType: "issue_comment" | "review_comment",
+  commentId: number,
+): string {
+  return `github:${owner}/${repo}:${sourceType}:${commentId}`;
+}
+
+function normalizeComment(
+  comment: GitHubComment,
+  excerptId: string,
+  kind: ActivityExcerpt["kind"],
+): ActivityExcerpt {
   return {
-    id: String(comment.id),
+    id: excerptId,
     kind,
     author: comment.user.login,
     body: clampText(comment.body ?? "", 500),
@@ -200,6 +269,63 @@ async function paginateList<T extends { updated_at: string }>(
   return results;
 }
 
+async function listOrganizationRepositories(org: string, token: string): Promise<string[]> {
+  const repositories: string[] = [];
+
+  for (let page = 1; ; page += 1) {
+    const pageResults = await fetchJson<GitHubOrgRepoListEntry[]>(
+      `https://api.github.com/orgs/${org}/repos?type=public&sort=updated&per_page=100&page=${page}`,
+      { headers: githubHeaders(token) },
+    );
+
+    if (pageResults.length === 0) {
+      break;
+    }
+
+    repositories.push(
+      ...pageResults
+        .filter((repository) => !repository.private && !repository.fork && !repository.archived)
+        .map((repository) => repository.full_name),
+    );
+  }
+
+  return repositories;
+}
+
+export async function resolveGitHubTargets(
+  targets: GitHubTarget[],
+  token: string,
+): Promise<{ repos: string[]; warnings: DatasetWarning[] }> {
+  const warnings: DatasetWarning[] = [];
+  const repos = new Set<string>();
+
+  for (const target of targets) {
+    if (target.kind === "repo") {
+      repos.add(target.repoFullName);
+      continue;
+    }
+
+    try {
+      const orgRepos = await listOrganizationRepositories(target.org, token);
+      for (const repo of orgRepos) {
+        repos.add(repo);
+      }
+    } catch (error) {
+      warnings.push({
+        id: randomUUID(),
+        sourceKey: target.raw,
+        severity: "warning",
+        message: `GitHub org expansion failed for ${target.raw}: ${(error as Error).message}`,
+      });
+    }
+  }
+
+  return {
+    repos: Array.from(repos),
+    warnings,
+  };
+}
+
 export async function fetchGitHubRepoActivity(
   repoFullName: string,
   window: FetchWindow,
@@ -242,7 +368,14 @@ export async function fetchGitHubRepoActivity(
         }
       }
 
-      const comments = [...issueComments.map((comment) => normalizeComment(comment, "comment")), ...reviewComments.map((comment) => normalizeComment(comment, "comment"))];
+      const comments = [
+        ...issueComments.map((comment) =>
+          normalizeComment(comment, buildGitHubExcerptId(owner, repo, "issue_comment", comment.id), "comment"),
+        ),
+        ...reviewComments.map((comment) =>
+          normalizeComment(comment, buildGitHubExcerptId(owner, repo, "review_comment", comment.id), "comment"),
+        ),
+      ];
       const events = [
         ...normalizeTimelineEvents(timeline, pullDetail, true),
         ...comments.map((comment) => ({
@@ -273,6 +406,7 @@ export async function fetchGitHubRepoActivity(
         completedAt: pullDetail.merged_at ?? pullDetail.closed_at,
         latestActivityAt: comments[0]?.createdAt ?? pullDetail.updated_at,
         linkedItems: Array.from(linkedItems).map((target) => ({ kind: "textual" as const, target })),
+        discussionTimeline: [],
         excerpts: comments.sort((left, right) => right.reactionCount - left.reactionCount || right.createdAt.localeCompare(left.createdAt)).slice(0, 3),
         metrics: {
           commentsCount: issueDetail.comments + pullDetail.review_comments,
@@ -319,7 +453,9 @@ export async function fetchGitHubRepoActivity(
         }
       }
 
-      const normalizedComments = comments.map((comment) => normalizeComment(comment, "comment"));
+      const normalizedComments = comments.map((comment) =>
+        normalizeComment(comment, buildGitHubExcerptId(owner, repo, "issue_comment", comment.id), "comment"),
+      );
       const events = [
         ...normalizeTimelineEvents(timeline, detail, false),
         ...normalizedComments.map((comment) => ({
@@ -350,6 +486,7 @@ export async function fetchGitHubRepoActivity(
         completedAt: detail.closed_at,
         latestActivityAt: normalizedComments[0]?.createdAt ?? detail.updated_at,
         linkedItems: Array.from(linkedItems).map((target) => ({ kind: "textual" as const, target })),
+        discussionTimeline: [],
         excerpts: normalizedComments.sort((left, right) => right.reactionCount - left.reactionCount || right.createdAt.localeCompare(left.createdAt)).slice(0, 3),
         metrics: {
           commentsCount: detail.comments,
