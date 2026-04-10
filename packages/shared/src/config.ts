@@ -13,12 +13,20 @@ type LegacyAppSettings = Partial<AppSettings> & {
   sourceConfig?: LegacySourceConfig | null;
 };
 
+function splitTargets(values: string[]): string[] {
+  return values
+    .join("\n")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export function normalizeSourceConfig(sourceConfig?: LegacySourceConfig | null): SourceConfig {
   const githubTargets = sourceConfig?.githubTargets ?? sourceConfig?.githubRepos ?? [];
   const forums = sourceConfig?.forums ?? DEFAULT_FORUMS;
 
   return {
-    githubTargets: githubTargets.map((value) => value.trim()).filter(Boolean),
+    githubTargets: splitTargets(githubTargets),
     forums: forums.map((value) => value.trim()).filter(Boolean),
   };
 }

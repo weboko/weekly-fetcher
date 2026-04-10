@@ -181,17 +181,17 @@ describe("shared helpers", () => {
 
   it("normalizes legacy GitHub repo settings", () => {
     expect(normalizeSourceConfig({
-      githubRepos: [" logos/repo ", ""],
+      githubRepos: [" logos/repo , openai/codex ", ""],
       forums: ["https://forum.logos.co/"],
     })).toEqual({
-      githubTargets: ["logos/repo"],
+      githubTargets: ["logos/repo", "openai/codex"],
       forums: ["https://forum.logos.co/"],
     });
 
     expect(normalizeAppSettings({
       sourceConfig: {
-        githubRepos: ["openai/codex"],
+        githubTargets: ["openai/codex,openai/gpt"],
       },
-    }).sourceConfig.githubTargets).toEqual(["openai/codex"]);
+    }).sourceConfig.githubTargets).toEqual(["openai/codex", "openai/gpt"]);
   });
 });

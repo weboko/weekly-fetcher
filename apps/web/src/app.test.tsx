@@ -102,4 +102,34 @@ describe("ui components", () => {
     expect(screen.getByText("org:owner", { selector: "code" })).toBeInTheDocument();
     expect(onFetch).not.toHaveBeenCalled();
   });
+
+  it("splits pasted GitHub targets by comma and newline before fetch", async () => {
+    const onFetch = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SettingsForm
+        initialSettings={createDefaultAppSettings(new Date("2026-04-08T00:00:00.000Z"))}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onFetch={onFetch}
+        isFetching={false}
+      />,
+    );
+
+    fireEvent.change(screen.getAllByRole("textbox")[0], {
+      target: { value: "logos/weekly-fetcher, org:logos\nopenai/codex" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Required for GitHub fetches; used for the next fetch only"), {
+      target: { value: "token" },
+    });
+    fireEvent.click(screen.getByText("Fetch weekly activity"));
+
+    await vi.waitFor(() => {
+      expect(onFetch).toHaveBeenCalledTimes(1);
+    });
+    expect(onFetch.mock.calls[0][0].sourceConfig.githubTargets).toEqual([
+      "logos/weekly-fetcher",
+      "org:logos",
+      "openai/codex",
+    ]);
+  });
 });

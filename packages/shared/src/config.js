@@ -4,12 +4,20 @@ import { DEFAULT_SCORING_WEIGHTS } from "./scoring";
 export const DEFAULT_FORUMS = ["https://forum.research.logos.co/", "https://forum.logos.co/"];
 export const DEFAULT_PROMPT_TEMPLATE = `Create a weekly social update prompt with the items below.\n\n{{update_list}}`;
 
+function splitTargets(values) {
+  return values
+    .join("\n")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export function normalizeSourceConfig(sourceConfig) {
   const githubTargets = sourceConfig?.githubTargets ?? sourceConfig?.githubRepos ?? [];
   const forums = sourceConfig?.forums ?? DEFAULT_FORUMS;
 
   return {
-    githubTargets: githubTargets.map((value) => value.trim()).filter(Boolean),
+    githubTargets: splitTargets(githubTargets),
     forums: forums.map((value) => value.trim()).filter(Boolean),
   };
 }

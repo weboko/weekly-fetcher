@@ -266,4 +266,202 @@ describe("fetchDataset", () => {
     expect(dataset.items).toHaveLength(2);
     expect(dataset.items.every((item) => item.excerpts.length === 1)).toBe(true);
   });
+
+  it("reuses cached forum items when an entire forum fetch fails", async () => {
+    const db = createDatabase(":memory:");
+    const forumUrl = "https://forum.logos.co";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === `${forumUrl}/latest.json`) {
+          return new Response(JSON.stringify({
+            topic_list: {
+              topics: [{
+                id: 1,
+                title: "Forum topic",
+                slug: "forum-topic",
+                created_at: "2026-04-02T10:00:00.000Z",
+                last_posted_at: "2026-04-03T10:00:00.000Z",
+                reply_count: 1,
+                like_count: 3,
+                posts_count: 2,
+                visible: true,
+              }],
+            },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url === `${forumUrl}/latest.rss`) {
+          return new Response("<rss><channel /></rss>", { status: 200 });
+        }
+        if (url === `${forumUrl}/t/1.json?print=true`) {
+          return new Response(JSON.stringify({
+            title: "Forum topic",
+            slug: "forum-topic",
+            id: 1,
+            created_at: "2026-04-02T10:00:00.000Z",
+            last_posted_at: "2026-04-03T10:00:00.000Z",
+            reply_count: 1,
+            like_count: 3,
+            posts_count: 2,
+            post_stream: {
+              stream: [10, 11],
+              posts: [
+                { id: 10, username: "alice", created_at: "2026-04-02T10:00:00.000Z", cooked: "<p>Topic body</p>" },
+                { id: 11, username: "bob", created_at: "2026-04-03T10:00:00.000Z", cooked: "<p>Reply body</p>" },
+              ],
+            },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      }),
+    );
+
+    const request: FetchRequest = {
+      sourceConfig: { githubTargets: [], forums: [forumUrl] },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+    };
+    const firstDataset = await fetchDataset(db, request);
+    expect(firstDataset.items).toHaveLength(1);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input) === `${forumUrl}/latest.json`) {
+          throw new Error("latest.json unavailable");
+        }
+        throw new Error(`Unexpected URL ${String(input)}`);
+      }),
+    );
+
+    const secondDataset = await fetchDataset(db, request);
+    expect(secondDataset.items).toHaveLength(1);
+    expect(secondDataset.items[0].itemKey).toBe(firstDataset.items[0].itemKey);
+    expect(secondDataset.warnings.some((warning) => warning.message.includes("reused cached forum data"))).toBe(true);
+  });
+
+  it("reuses cached richer forum topic content when topic detail fetch is degraded", async () => {
+    const db = createDatabase(":memory:");
+    const forumUrl = "https://forum.logos.co";
+    const request: FetchRequest = {
+      sourceConfig: { githubTargets: [], forums: [forumUrl] },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === `${forumUrl}/latest.json`) {
+          return new Response(JSON.stringify({
+            topic_list: {
+              topics: [{
+                id: 1, title: "Forum topic", slug: "forum-topic", created_at: "2026-04-02T10:00:00.000Z",
+                last_posted_at: "2026-04-03T10:00:00.000Z", reply_count: 1, like_count: 3, posts_count: 2, visible: true,
+              }],
+            },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url === `${forumUrl}/latest.rss`) {
+          return new Response("<rss><channel /></rss>", { status: 200 });
+        }
+        if (url === `${forumUrl}/t/1.json?print=true`) {
+          return new Response(JSON.stringify({
+            title: "Forum topic", slug: "forum-topic", id: 1, created_at: "2026-04-02T10:00:00.000Z", last_posted_at: "2026-04-03T10:00:00.000Z",
+            reply_count: 1, like_count: 3, posts_count: 2, post_stream: { stream: [10, 11], posts: [
+              { id: 10, username: "alice", created_at: "2026-04-02T10:00:00.000Z", cooked: "<p>Topic body</p>" },
+              { id: 11, username: "bob", created_at: "2026-04-03T10:00:00.000Z", cooked: "<p>Reply body</p>" },
+            ] },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      }),
+    );
+    const firstDataset = await fetchDataset(db, request);
+    expect(firstDataset.items[0].discussionTimeline.length).toBeGreaterThan(0);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === `${forumUrl}/latest.json`) {
+          return new Response(JSON.stringify({
+            topic_list: {
+              topics: [{
+                id: 1, title: "Forum topic", slug: "forum-topic", created_at: "2026-04-02T10:00:00.000Z",
+                last_posted_at: "2026-04-03T10:00:00.000Z", reply_count: 1, like_count: 3, posts_count: 2, visible: true,
+              }],
+            },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url === `${forumUrl}/latest.rss`) {
+          return new Response("<rss><channel /></rss>", { status: 200 });
+        }
+        if (url === `${forumUrl}/t/1.json?print=true`) {
+          return new Response(JSON.stringify({
+            errors: ["You’ve performed this action too many times, please try again later."],
+          }), { status: 422, headers: { "Content-Type": "application/json" } });
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      }),
+    );
+
+    const secondDataset = await fetchDataset(db, request);
+    expect(secondDataset.items[0].body).toBe("Topic body");
+    expect(secondDataset.items[0].discussionTimeline.length).toBeGreaterThan(0);
+    expect(secondDataset.items[0].warnings.some((warning) => warning.includes("previously cached forum content"))).toBe(true);
+  });
+
+  it("retries transient discourse 422 responses before succeeding", async () => {
+    const forumUrl = "https://forum.logos.co";
+    let topicAttempts = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === `${forumUrl}/latest.json`) {
+          return new Response(JSON.stringify({
+            topic_list: {
+              topics: [{
+                id: 1, title: "Forum topic", slug: "forum-topic", created_at: "2026-04-02T10:00:00.000Z",
+                last_posted_at: "2026-04-03T10:00:00.000Z", reply_count: 1, like_count: 3, posts_count: 2, visible: true,
+              }],
+            },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url === `${forumUrl}/latest.rss`) {
+          return new Response("<rss><channel /></rss>", { status: 200 });
+        }
+        if (url === `${forumUrl}/t/1.json?print=true`) {
+          topicAttempts += 1;
+          if (topicAttempts < 3) {
+            return new Response(JSON.stringify({
+              errors: ["You’ve performed this action too many times, please try again later."],
+            }), { status: 422, headers: { "Content-Type": "application/json" } });
+          }
+          return new Response(JSON.stringify({
+            title: "Forum topic", slug: "forum-topic", id: 1, created_at: "2026-04-02T10:00:00.000Z", last_posted_at: "2026-04-03T10:00:00.000Z",
+            reply_count: 1, like_count: 3, posts_count: 2, post_stream: { stream: [10], posts: [
+              { id: 10, username: "alice", created_at: "2026-04-02T10:00:00.000Z", cooked: "<p>Topic body</p>" },
+            ] },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      }),
+    );
+
+    const dataset = await fetchDataset(createDatabase(":memory:"), {
+      sourceConfig: { githubTargets: [], forums: [forumUrl] },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+    });
+
+    expect(topicAttempts).toBe(3);
+    expect(dataset.items[0].body).toBe("Topic body");
+    expect(dataset.warnings.some((warning) => warning.message.includes("partially parsed"))).toBe(false);
+  });
 });

@@ -168,6 +168,11 @@ export function getDataset(db: SqliteDatabase, datasetId: string): DatasetRecord
   return row ? inflateDataset(db, row) : null;
 }
 
+export function getDatasetByCacheKey(db: SqliteDatabase, cacheKey: string): DatasetRecord | null {
+  const row = db.prepare("SELECT * FROM datasets WHERE cache_key = ?").get(cacheKey) as Record<string, string> | undefined;
+  return row ? inflateDataset(db, row) : null;
+}
+
 export function updateItemState(
   db: SqliteDatabase,
   datasetId: string,

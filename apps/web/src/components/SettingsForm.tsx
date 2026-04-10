@@ -8,6 +8,13 @@ interface SettingsFormProps {
   isFetching: boolean;
 }
 
+function parseGithubTargets(input: string): string[] {
+  return input
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: SettingsFormProps) {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [githubToken, setGithubToken] = useState("");
@@ -56,10 +63,7 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
           onChange={(event) =>
             update("sourceConfig", {
               ...settings.sourceConfig,
-              githubTargets: event.target.value
-                .split("\n")
-                .map((value) => value.trim())
-                .filter(Boolean),
+              githubTargets: parseGithubTargets(event.target.value),
             })
           }
           placeholder={"owner/repo\norg:owner"}
