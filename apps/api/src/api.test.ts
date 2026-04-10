@@ -55,12 +55,22 @@ describe("github target parsing", () => {
       raw: "org:logos",
       org: "logos",
     });
+    expect(parseGitHubTarget("logos")).toEqual({
+      kind: "org",
+      raw: "logos",
+      org: "logos",
+    });
+    expect(parseGitHubTarget("logos-co/")).toEqual({
+      kind: "org",
+      raw: "logos-co",
+      org: "logos-co",
+    });
   });
 
   it("rejects malformed targets", () => {
-    expect(parseGitHubTarget("logos")).toBeNull();
     expect(parseGitHubTarget("org:logos/repo")).toBeNull();
     expect(parseGitHubTarget("logos/repo/extra")).toBeNull();
+    expect(parseGitHubTarget("https://github.com/logos")).toBeNull();
   });
 });
 

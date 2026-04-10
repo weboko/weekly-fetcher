@@ -50,7 +50,7 @@ async function fetchGitHubActivity(request: FetchRequest): Promise<GitHubAdapter
   const parsedTargets = request.sourceConfig.githubTargets.flatMap((target) => {
     const parsedTarget = parseGitHubTarget(target);
     if (!parsedTarget) {
-      warnings.push(createWarning(target, `Invalid GitHub target "${target}". Use owner/repo or org:owner.`));
+      warnings.push(createWarning(target, `Invalid GitHub target "${target}". Use owner/repo, owner, or org:owner.`));
       return [];
     }
     return [parsedTarget];

@@ -136,6 +136,23 @@ describe("fetchDataset", () => {
     expect(dataset.warnings.some((warning) => warning.message.includes("abuse detection mechanism"))).toBe(true);
   });
 
+  it("warns on malformed GitHub targets with the accepted formats", async () => {
+    const dataset = await fetchDataset(createDatabase(":memory:"), {
+      sourceConfig: {
+        githubTargets: ["logos-co/logos-scaffold/issues"],
+        forums: [],
+      },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+    });
+
+    expect(dataset.items).toHaveLength(0);
+    expect(dataset.warnings).toHaveLength(1);
+    expect(dataset.warnings[0].message).toBe(
+      'Invalid GitHub target "logos-co/logos-scaffold/issues". Use owner/repo, owner, or org:owner.',
+    );
+  });
+
   it("persists items when fetched excerpts reuse the same raw upstream id across items", async () => {
     const forumUrl = "https://forum.logos.co";
 

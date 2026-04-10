@@ -93,12 +93,13 @@ describe("ui components", () => {
     );
 
     fireEvent.change(screen.getAllByRole("textbox")[0], {
-      target: { value: "logos/weekly-fetcher\norg:logos" },
+      target: { value: "logos/weekly-fetcher\nlogos-co\norg:logos" },
     });
     fireEvent.click(screen.getByText("Fetch weekly activity"));
 
     expect(screen.getByText("GitHub targets require a GitHub token for fetches.")).toBeInTheDocument();
     expect(screen.getByText("owner/repo", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("owner", { selector: "code" })).toBeInTheDocument();
     expect(screen.getByText("org:owner", { selector: "code" })).toBeInTheDocument();
     expect(onFetch).not.toHaveBeenCalled();
   });
@@ -116,7 +117,7 @@ describe("ui components", () => {
     );
 
     fireEvent.change(screen.getAllByRole("textbox")[0], {
-      target: { value: "logos/weekly-fetcher, org:logos\nopenai/codex" },
+      target: { value: "logos/weekly-fetcher, logos-co\norg:openai" },
     });
     fireEvent.change(screen.getByPlaceholderText("Required for GitHub fetches; used for the next fetch only"), {
       target: { value: "token" },
@@ -128,8 +129,8 @@ describe("ui components", () => {
     });
     expect(onFetch.mock.calls[0][0].sourceConfig.githubTargets).toEqual([
       "logos/weekly-fetcher",
-      "org:logos",
-      "openai/codex",
+      "logos-co",
+      "org:openai",
     ]);
   });
 });

@@ -66,9 +66,9 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
               githubTargets: parseGithubTargets(event.target.value),
             })
           }
-          placeholder={"owner/repo\norg:owner"}
+          placeholder={"logos-co\nowner/repo\norg:owner"}
         />
-        <small>One per line. Use <code>owner/repo</code> for a single repo or <code>org:owner</code> for all active public repos in an organization.</small>
+        <small>One per line. Use <code>owner/repo</code> for a single repo, <code>owner</code> for all active public repos in an organization, or <code>org:owner</code> for the explicit organization form.</small>
       </label>
 
       <label>

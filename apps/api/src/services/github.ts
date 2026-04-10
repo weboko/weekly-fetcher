@@ -134,7 +134,7 @@ function shouldStopPaging(updatedAt: string, window: FetchWindow): boolean {
 }
 
 export function parseGitHubTarget(target: string): GitHubTarget | null {
-  const normalized = target.trim();
+  const normalized = target.trim().replace(/\/+$/, "");
   if (!normalized) {
     return null;
   }
@@ -152,7 +152,21 @@ export function parseGitHubTarget(target: string): GitHubTarget | null {
     };
   }
 
-  const [owner, repo, ...rest] = normalized.split("/");
+  const segments = normalized.split("/");
+  if (segments.length === 1) {
+    const [org] = segments;
+    if (!org || !GITHUB_SEGMENT_PATTERN.test(org)) {
+      return null;
+    }
+
+    return {
+      kind: "org",
+      raw: normalized,
+      org,
+    };
+  }
+
+  const [owner, repo, ...rest] = segments;
   if (!owner || !repo || rest.length > 0 || !GITHUB_SEGMENT_PATTERN.test(owner) || !GITHUB_SEGMENT_PATTERN.test(repo)) {
     return null;
   }
