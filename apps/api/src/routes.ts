@@ -2,7 +2,7 @@ import { type FastifyInstance } from "fastify";
 import { type AppSettings, type FetchRequest, type PostItemRequest, type UpdateItemStateRequest } from "@weekly/shared";
 
 import type { SqliteDatabase } from "./db";
-import { fetchDataset } from "./services/fetcher";
+import * as fetcherService from "./services/fetcher";
 import { getDataset, getSettings, markItemPosted, saveSettings, updateItemState } from "./services/store";
 
 export async function registerRoutes(app: FastifyInstance, db: SqliteDatabase) {
@@ -15,10 +15,41 @@ export async function registerRoutes(app: FastifyInstance, db: SqliteDatabase) {
   });
 
   app.post<{ Body: FetchRequest }>("/api/fetch", async (request, reply) => {
+    const startedAt = Date.now();
+    const logger = request.log.child({
+      requestId: request.id,
+      route: "/api/fetch",
+    });
+
+    logger.info(
+      {
+        githubTargetCount: request.body.sourceConfig.githubTargets.length,
+        forumCount: request.body.sourceConfig.forums.length,
+        fetchWindow: request.body.fetchWindow,
+      },
+      "Fetch request started",
+    );
+
     try {
-      const dataset = await fetchDataset(db, request.body);
+      const dataset = await fetcherService.fetchDataset(db, request.body, { logger });
+      logger.info(
+        {
+          datasetId: dataset.id,
+          itemCount: dataset.items.length,
+          warningCount: dataset.warnings.length,
+          durationMs: Date.now() - startedAt,
+        },
+        "Fetch request completed",
+      );
       return reply.send({ dataset });
     } catch (error) {
+      logger.error(
+        {
+          durationMs: Date.now() - startedAt,
+          errorMessage: error instanceof Error ? error.message : "Dataset fetch failed",
+        },
+        "Fetch request failed",
+      );
       return reply.code(500).send({
         message: error instanceof Error ? error.message : "Dataset fetch failed",
       });

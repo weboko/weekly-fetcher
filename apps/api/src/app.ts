@@ -1,12 +1,21 @@
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { type FastifyServerOptions } from "fastify";
 
-import { createDatabase } from "./db";
+import { createDatabase, type SqliteDatabase } from "./db";
 import { registerRoutes } from "./routes";
 
-export async function buildApp() {
-  const app = Fastify({ logger: false });
-  const db = createDatabase();
+interface BuildAppOptions {
+  db?: SqliteDatabase;
+  logger?: FastifyServerOptions["logger"];
+}
+
+export async function buildApp(options: BuildAppOptions = {}) {
+  const app = Fastify({
+    logger: options.logger ?? {
+      level: process.env.LOG_LEVEL ?? "info",
+    },
+  });
+  const db = options.db ?? createDatabase();
 
   await app.register(cors, {
     origin: true,
@@ -15,4 +24,3 @@ export async function buildApp() {
   await registerRoutes(app, db);
   return app;
 }
-

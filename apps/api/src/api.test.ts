@@ -1,7 +1,9 @@
 import { DEFAULT_SCORING_WEIGHTS, createDefaultFetchWindow } from "@weekly/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { buildApp } from "./app";
 import { createDatabase } from "./db";
+import * as fetcherService from "./services/fetcher";
 import { fetchDiscourseForumActivity } from "./services/discourse";
 import { extractTextualLinks, fetchGitHubRepoActivity, parseGitHubTarget, resolveGitHubTargets } from "./services/github";
 import { isReactivated } from "./services/reactivation";
@@ -12,6 +14,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
+
+function createLogCollector() {
+  const entries: Array<Record<string, unknown>> = [];
+
+  return {
+    entries,
+    stream: {
+      write(message: string) {
+        const trimmed = message.trim();
+        if (!trimmed) {
+          return;
+        }
+        entries.push(JSON.parse(trimmed) as Record<string, unknown>);
+      },
+    },
+  };
+}
 
 describe("github link extraction", () => {
   it("captures repo-local and cross-repo references", () => {
@@ -639,5 +658,87 @@ describe("excerpt ids", () => {
       "Reply one",
       "Reply two",
     ]);
+  });
+});
+
+describe("/api/fetch route", () => {
+  it("returns the dataset payload and logs fetch start/end metadata", async () => {
+    const logs = createLogCollector();
+    const app = await buildApp({
+      db: createDatabase(":memory:"),
+      logger: {
+        level: "info",
+        stream: logs.stream,
+      },
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/fetch",
+        payload: {
+          sourceConfig: {
+            githubTargets: [],
+            forums: [],
+          },
+          fetchWindow: {
+            startDate: "2026-04-01",
+            endDate: "2026-04-08",
+            timeZone: "Europe/Prague",
+          },
+          scoringWeights: DEFAULT_SCORING_WEIGHTS,
+        },
+      });
+
+      const payload = response.json() as { dataset: { id: string; items: unknown[]; warnings: unknown[] } };
+
+      expect(response.statusCode).toBe(200);
+      expect(payload.dataset.id).toEqual(expect.any(String));
+      expect(payload.dataset.items).toEqual([]);
+      expect(payload.dataset.warnings).toEqual([]);
+      expect(logs.entries.some((entry) => entry.msg === "Fetch request started")).toBe(true);
+      expect(logs.entries.some((entry) => entry.msg === "Fetch request completed")).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns the same error response shape and logs fetch failures", async () => {
+    const logs = createLogCollector();
+    const fetchDatasetSpy = vi.spyOn(fetcherService, "fetchDataset").mockRejectedValueOnce(new Error("Dataset fetch failed hard"));
+    const app = await buildApp({
+      db: createDatabase(":memory:"),
+      logger: {
+        level: "info",
+        stream: logs.stream,
+      },
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/fetch",
+        payload: {
+          sourceConfig: {
+            githubTargets: [],
+            forums: [],
+          },
+          fetchWindow: {
+            startDate: "2026-04-01",
+            endDate: "2026-04-08",
+            timeZone: "Europe/Prague",
+          },
+          scoringWeights: DEFAULT_SCORING_WEIGHTS,
+        },
+      });
+
+      expect(fetchDatasetSpy).toHaveBeenCalledTimes(1);
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ message: "Dataset fetch failed hard" });
+      expect(logs.entries.some((entry) => entry.msg === "Fetch request started")).toBe(true);
+      expect(logs.entries.some((entry) => entry.msg === "Fetch request failed")).toBe(true);
+    } finally {
+      await app.close();
+    }
   });
 });

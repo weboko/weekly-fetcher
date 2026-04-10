@@ -5,8 +5,14 @@ interface SettingsFormProps {
   initialSettings: AppSettings;
   onSave: (settings: AppSettings) => Promise<void>;
   onFetch: (settings: AppSettings, githubToken: string) => Promise<void>;
+  onStopFetch: () => void;
   isFetching: boolean;
 }
+
+type FetchState =
+  | { kind: "idle" }
+  | { kind: "error"; message: string }
+  | { kind: "canceled"; message: string };
 
 function parseGithubTargets(input: string): string[] {
   return input
@@ -15,14 +21,19 @@ function parseGithubTargets(input: string): string[] {
     .filter(Boolean);
 }
 
-export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: SettingsFormProps) {
+function isAbortError(error: unknown): boolean {
+  return (error instanceof DOMException && error.name === "AbortError")
+    || (error instanceof Error && error.name === "AbortError");
+}
+
+export function SettingsForm({ initialSettings, onSave, onFetch, onStopFetch, isFetching }: SettingsFormProps) {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const [githubToken, setGithubToken] = useState("");
-  const [fetchError, setFetchError] = useState("");
+  const [fetchState, setFetchState] = useState<FetchState>({ kind: "idle" });
 
   useEffect(() => {
     setSettings(initialSettings);
-    setFetchError("");
+    setFetchState({ kind: "idle" });
   }, [initialSettings]);
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
@@ -30,17 +41,23 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
   }
 
   async function handleFetch() {
-    setFetchError("");
+    setFetchState({ kind: "idle" });
 
     if (settings.sourceConfig.githubTargets.length > 0 && !githubToken.trim()) {
-      setFetchError("GitHub targets require a GitHub token for fetches.");
+      setFetchState({ kind: "error", message: "GitHub targets require a GitHub token for fetches." });
       return;
     }
 
     try {
       await onFetch(settings, githubToken.trim());
+      setFetchState({ kind: "idle" });
     } catch (error) {
-      setFetchError(error instanceof Error ? error.message : "Fetch failed");
+      if (isAbortError(error)) {
+        setFetchState({ kind: "canceled", message: "Fetch canceled. Current results are unchanged." });
+        return;
+      }
+
+      setFetchState({ kind: "error", message: error instanceof Error ? error.message : "Fetch failed" });
     }
   }
 
@@ -239,12 +256,12 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
           value={githubToken}
           onChange={(event) => {
             setGithubToken(event.target.value);
-            setFetchError("");
+            setFetchState({ kind: "idle" });
           }}
           placeholder="Required for GitHub fetches; used for the next fetch only"
         />
       </label>
-      {fetchError ? <p className="warning-text">{fetchError}</p> : null}
+      {fetchState.kind !== "idle" ? <p className="warning-text">{fetchState.message}</p> : null}
 
       <div className="button-row">
         <button
@@ -262,8 +279,13 @@ export function SettingsForm({ initialSettings, onSave, onFetch, isFetching }: S
         <button className="secondary-button" onClick={() => void onSave(settings)}>
           Save settings
         </button>
+        {isFetching ? (
+          <button className="secondary-button" onClick={onStopFetch}>
+            Stop fetch
+          </button>
+        ) : null}
         <button className="primary-button" disabled={isFetching} onClick={() => void handleFetch()}>
-          {isFetching ? "Fetching…" : "Fetch weekly activity"}
+          {isFetching ? "Fetching…" : fetchState.kind === "canceled" ? "Resume fetch" : "Fetch weekly activity"}
         </button>
       </div>
     </section>

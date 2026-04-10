@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createDefaultAppSettings, type ActivityItem, type AppSettings, type DatasetRecord } from "@weekly/shared";
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { ChartCard } from "./components/ChartCard";
 import { DetailPanel } from "./components/DetailPanel";
@@ -22,6 +22,7 @@ function containerLabel(item: ActivityItem): string {
 }
 
 export function App() {
+  const activeFetchController = useRef<AbortController | null>(null);
   const [dataset, setDataset] = useState<DatasetRecord | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [topCount, setTopCount] = useState(5);
@@ -57,11 +58,15 @@ export function App() {
   });
 
   const fetchMutation = useMutation({
-    mutationFn: fetchDataset,
+    mutationFn: ({ payload, signal }: { payload: Parameters<typeof fetchDataset>[0]; signal?: AbortSignal }) =>
+      fetchDataset(payload, signal),
     onSuccess: (response) => {
       setDataset(response.dataset);
       localStorage.setItem(LAST_DATASET_KEY, response.dataset.id);
       settingsQuery.refetch();
+    },
+    onSettled: () => {
+      activeFetchController.current = null;
     },
   });
 
@@ -121,12 +126,21 @@ export function App() {
 
   async function handleFetch(nextSettings: AppSettings, githubToken: string) {
     await handleSaveSettings(nextSettings);
+    const controller = new AbortController();
+    activeFetchController.current = controller;
     await fetchMutation.mutateAsync({
-      sourceConfig: nextSettings.sourceConfig,
-      fetchWindow: nextSettings.fetchWindow,
-      scoringWeights: nextSettings.scoringWeights,
-      githubToken: githubToken || undefined,
+      payload: {
+        sourceConfig: nextSettings.sourceConfig,
+        fetchWindow: nextSettings.fetchWindow,
+        scoringWeights: nextSettings.scoringWeights,
+        githubToken: githubToken || undefined,
+      },
+      signal: controller.signal,
     });
+  }
+
+  function handleStopFetch() {
+    activeFetchController.current?.abort();
   }
 
   async function handleToggleSelected(item: ActivityItem, selected: boolean) {
@@ -226,6 +240,7 @@ export function App() {
           initialSettings={settingsQuery.data ?? defaultSettings()}
           onSave={handleSaveSettings}
           onFetch={handleFetch}
+          onStopFetch={handleStopFetch}
           isFetching={fetchMutation.isPending}
         />
 

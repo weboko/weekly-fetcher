@@ -3,12 +3,120 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "./db";
 import { fetchDataset } from "./services/fetcher";
+import { getDatasetByCacheKey } from "./services/store";
 
 const fetchWindow = {
   startDate: "2026-04-01",
   endDate: "2026-04-08",
   timeZone: "Europe/Prague",
 } satisfies FetchRequest["fetchWindow"];
+
+function buildGitHubRepoFixture(repoFullName: string, issueNumber: number, title: string) {
+  const [owner, repo] = repoFullName.split("/");
+  const issueUrl = `https://github.com/${owner}/${repo}/issues/${issueNumber}`;
+
+  return {
+    owner,
+    repo,
+    repoFullName,
+    issueNumber,
+    issueUrl,
+    issueListEntry: {
+      number: issueNumber,
+      title,
+      body: `${title} body`,
+      created_at: "2026-04-02T10:00:00.000Z",
+      updated_at: "2026-04-03T10:00:00.000Z",
+      closed_at: null,
+    },
+    issueDetail: {
+      number: issueNumber,
+      title,
+      body: `${title} body`,
+      html_url: issueUrl,
+      created_at: "2026-04-02T10:00:00.000Z",
+      updated_at: "2026-04-03T10:00:00.000Z",
+      closed_at: null,
+      state: "open",
+      state_reason: null,
+      comments: 1,
+      reactions: { total_count: 1 },
+      labels: [],
+    },
+    issueComments: [
+      {
+        id: issueNumber * 100,
+        body: `${title} comment`,
+        created_at: "2026-04-03T11:00:00.000Z",
+        html_url: `${issueUrl}#issuecomment-${issueNumber * 100}`,
+        reactions: { total_count: 2 },
+        user: { login: "alice" },
+      },
+    ],
+  };
+}
+
+function stubGitHubRepoFetches(fixtures: Record<string, ReturnType<typeof buildGitHubRepoFixture>>, failingRepos: string[] = []) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const match = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/(pulls|issues)(?:\/(\d+)(?:\/(comments|timeline))?)?$/);
+      if (!match) {
+        throw new Error(`Unexpected URL ${url}`);
+      }
+
+      const repoFullName = `${match[1]}/${match[2]}`;
+      const resource = match[3];
+      const issueNumber = match[4] ? Number(match[4]) : null;
+      const nestedResource = match[5] ?? null;
+      const fixture = fixtures[repoFullName];
+
+      if (!fixture) {
+        throw new Error(`Unexpected repo ${repoFullName}`);
+      }
+
+      if (failingRepos.includes(repoFullName)) {
+        throw new Error(`GitHub repo unavailable for ${repoFullName}`);
+      }
+
+      if (resource === "pulls" && issueNumber === null) {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+
+      if (resource === "issues" && issueNumber === null) {
+        const page = url.searchParams.get("page");
+        return new Response(JSON.stringify(page === "1" ? [fixture.issueListEntry] : []), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (resource === "issues" && issueNumber === fixture.issueNumber && nestedResource === null) {
+        return new Response(JSON.stringify(fixture.issueDetail), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (resource === "issues" && issueNumber === fixture.issueNumber && nestedResource === "comments") {
+        return new Response(JSON.stringify(fixture.issueComments), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (resource === "issues" && issueNumber === fixture.issueNumber && nestedResource === "timeline") {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    }),
+  );
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -134,6 +242,88 @@ describe("fetchDataset", () => {
     expect(dataset.items).toHaveLength(0);
     expect(dataset.warnings.some((warning) => warning.message.includes("GitHub fetch failed for logos/weekly-fetcher"))).toBe(true);
     expect(dataset.warnings.some((warning) => warning.message.includes("abuse detection mechanism"))).toBe(true);
+  });
+
+  it("reuses cached GitHub items when a later fetch fails for the same cache key", async () => {
+    const db = createDatabase(":memory:");
+    const request: FetchRequest = {
+      sourceConfig: {
+        githubTargets: ["logos/weekly-fetcher"],
+        forums: [],
+      },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+      githubToken: "token",
+    };
+
+    stubGitHubRepoFetches({
+      "logos/weekly-fetcher": buildGitHubRepoFixture("logos/weekly-fetcher", 7, "Initial GitHub issue"),
+    });
+
+    const firstDataset = await fetchDataset(db, request);
+    expect(firstDataset.items).toHaveLength(1);
+    expect(firstDataset.items[0].title).toBe("Initial GitHub issue");
+
+    stubGitHubRepoFetches({
+      "logos/weekly-fetcher": buildGitHubRepoFixture("logos/weekly-fetcher", 7, "Ignored replacement"),
+    }, ["logos/weekly-fetcher"]);
+
+    const secondDataset = await fetchDataset(db, request);
+
+    expect(secondDataset.items).toHaveLength(1);
+    expect(secondDataset.items[0].itemKey).toBe(firstDataset.items[0].itemKey);
+    expect(secondDataset.items[0].title).toBe("Initial GitHub issue");
+    expect(secondDataset.items[0].warnings).toContain("Showing previously cached GitHub content because latest refresh failed.");
+    expect(secondDataset.warnings.some((warning) => warning.message.includes("GitHub fetch failed for logos/weekly-fetcher"))).toBe(true);
+    expect(secondDataset.warnings.some((warning) => warning.message.includes("reused cached GitHub data"))).toBe(true);
+
+    const persistedDataset = getDatasetByCacheKey(db, firstDataset.cacheKey);
+    expect(persistedDataset?.items.map((item) => item.itemKey)).toEqual(secondDataset.items.map((item) => item.itemKey));
+    expect(persistedDataset?.warnings.map((warning) => warning.message)).toEqual(secondDataset.warnings.map((warning) => warning.message));
+  });
+
+  it("reuses cached GitHub items only for repos whose refresh failed", async () => {
+    const db = createDatabase(":memory:");
+    const request: FetchRequest = {
+      sourceConfig: {
+        githubTargets: ["logos/repo-one", "logos/repo-two"],
+        forums: [],
+      },
+      fetchWindow,
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+      githubToken: "token",
+    };
+
+    stubGitHubRepoFetches({
+      "logos/repo-one": buildGitHubRepoFixture("logos/repo-one", 11, "Repo one old"),
+      "logos/repo-two": buildGitHubRepoFixture("logos/repo-two", 22, "Repo two old"),
+    });
+
+    const firstDataset = await fetchDataset(db, request);
+    expect(firstDataset.items).toHaveLength(2);
+
+    stubGitHubRepoFetches({
+      "logos/repo-one": buildGitHubRepoFixture("logos/repo-one", 11, "Repo one new"),
+      "logos/repo-two": buildGitHubRepoFixture("logos/repo-two", 22, "Repo two ignored"),
+    }, ["logos/repo-two"]);
+
+    const secondDataset = await fetchDataset(db, request);
+    const repoOneItem = secondDataset.items.find((item) =>
+      item.sourceMeta.source === "github"
+      && item.sourceMeta.organization === "logos"
+      && item.sourceMeta.repository === "repo-one");
+    const repoTwoItem = secondDataset.items.find((item) =>
+      item.sourceMeta.source === "github"
+      && item.sourceMeta.organization === "logos"
+      && item.sourceMeta.repository === "repo-two");
+
+    expect(secondDataset.items).toHaveLength(2);
+    expect(repoOneItem?.title).toBe("Repo one new");
+    expect(repoOneItem?.warnings).not.toContain("Showing previously cached GitHub content because latest refresh failed.");
+    expect(repoTwoItem?.title).toBe("Repo two old");
+    expect(repoTwoItem?.warnings).toContain("Showing previously cached GitHub content because latest refresh failed.");
+    expect(secondDataset.warnings.some((warning) => warning.message.includes("GitHub fetch failed for logos/repo-two"))).toBe(true);
+    expect(secondDataset.warnings.some((warning) => warning.message.includes("reused cached GitHub data"))).toBe(true);
   });
 
   it("warns on malformed GitHub targets with the accepted formats", async () => {

@@ -7,7 +7,7 @@ import type {
   UpdateItemStateRequest,
 } from "@weekly/shared";
 
-async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+async function requestJson<T>(input: RequestInfo, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
   const response = await fetch(input, {
     headers: {
       "Content-Type": "application/json",
@@ -33,10 +33,11 @@ export function saveSettings(settings: AppSettings) {
   });
 }
 
-export function fetchDataset(payload: FetchRequest) {
+export function fetchDataset(payload: FetchRequest, signal?: AbortSignal) {
   return requestJson<FetchResponse>("/api/fetch", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 
@@ -57,4 +58,3 @@ export function postItem(itemKey: string, payload: PostItemRequest) {
     body: JSON.stringify(payload),
   });
 }
-

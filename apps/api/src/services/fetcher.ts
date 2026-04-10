@@ -8,6 +8,29 @@ import { createEmptyDatasetRecord, finalizeItem, getDatasetByCacheKey, replaceDa
 
 const GITHUB_FETCH_CONCURRENCY = 2;
 
+interface FetcherLogger {
+  info(payload: Record<string, unknown>, message: string): void;
+  warn(payload: Record<string, unknown>, message: string): void;
+  error?(payload: Record<string, unknown>, message: string): void;
+}
+
+interface FetchDatasetOptions {
+  logger?: FetcherLogger;
+}
+
+interface GitHubRepoFetchResult {
+  repo: string;
+  status: "success" | "failure";
+  items: GitHubAdapterResult["items"];
+  warnings: DatasetWarning[];
+  errorMessage?: string;
+}
+
+interface GitHubFetchResult {
+  warnings: DatasetWarning[];
+  repoResults: GitHubRepoFetchResult[];
+}
+
 async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
@@ -44,50 +67,104 @@ function isRicherForumItem(previousItem: ActivityItem, currentItem: Omit<Activit
   return previousSignal > currentSignal;
 }
 
-async function fetchGitHubActivity(request: FetchRequest): Promise<GitHubAdapterResult> {
+function buildGitHubRepoKey(item: ActivityItem): string | null {
+  if (item.source !== "github" || item.sourceMeta.source !== "github") {
+    return null;
+  }
+
+  return `${item.sourceMeta.organization}/${item.sourceMeta.repository}`;
+}
+
+async function fetchGitHubActivity(request: FetchRequest, logger?: FetcherLogger): Promise<GitHubFetchResult> {
   const warnings: DatasetWarning[] = [];
-  const items: GitHubAdapterResult["items"] = [];
+  const invalidTargets: string[] = [];
   const parsedTargets = request.sourceConfig.githubTargets.flatMap((target) => {
     const parsedTarget = parseGitHubTarget(target);
     if (!parsedTarget) {
+      invalidTargets.push(target);
       warnings.push(createWarning(target, `Invalid GitHub target "${target}". Use owner/repo, owner, or org:owner.`));
       return [];
     }
     return [parsedTarget];
   });
 
+  logger?.info(
+    {
+      targetCount: request.sourceConfig.githubTargets.length,
+      parsedTargetCount: parsedTargets.length,
+      invalidTargetCount: invalidTargets.length,
+    },
+    "Processed GitHub targets",
+  );
+
+  if (invalidTargets.length > 0) {
+    logger?.warn({ invalidTargets }, "Ignored invalid GitHub targets");
+  }
+
   if (parsedTargets.length === 0) {
-    return { items, warnings };
+    return { warnings, repoResults: [] };
   }
 
   if (!request.githubToken) {
     warnings.push(createWarning("github", "GitHub targets require a GitHub token. GitHub activity was skipped."));
-    return { items, warnings };
+    logger?.warn({ parsedTargetCount: parsedTargets.length }, "Skipped GitHub fetch because no token was provided");
+    return { warnings, repoResults: [] };
   }
 
   const resolvedTargets = await resolveGitHubTargets(parsedTargets, request.githubToken);
   warnings.push(...resolvedTargets.warnings);
+  logger?.info(
+    {
+      parsedTargetCount: parsedTargets.length,
+      resolvedRepoCount: resolvedTargets.repos.length,
+      warningCount: resolvedTargets.warnings.length,
+    },
+    "Resolved GitHub targets",
+  );
 
   const repoResults = await mapWithConcurrency(resolvedTargets.repos, GITHUB_FETCH_CONCURRENCY, async (repo) => {
     try {
-      return await fetchGitHubRepoActivity(repo, request.fetchWindow, request.githubToken);
-    } catch (error) {
+      const result = await fetchGitHubRepoActivity(repo, request.fetchWindow, request.githubToken);
+      logger?.info(
+        {
+          repo,
+          status: "success",
+          itemCount: result.items.length,
+          warningCount: result.warnings.length,
+        },
+        "Fetched GitHub repo activity",
+      );
       return {
+        repo,
+        status: "success",
+        items: result.items,
+        warnings: result.warnings,
+      } satisfies GitHubRepoFetchResult;
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      logger?.warn(
+        {
+          repo,
+          status: "failure",
+          errorMessage,
+        },
+        "GitHub repo fetch failed",
+      );
+      return {
+        repo,
+        status: "failure",
         items: [],
-        warnings: [createWarning(repo, `GitHub fetch failed for ${repo}: ${(error as Error).message}`)],
-      } satisfies GitHubAdapterResult;
+        warnings: [createWarning(repo, `GitHub fetch failed for ${repo}: ${errorMessage}`)],
+        errorMessage,
+      } satisfies GitHubRepoFetchResult;
     }
   });
 
-  for (const result of repoResults) {
-    warnings.push(...result.warnings);
-    items.push(...result.items);
-  }
-
-  return { items, warnings };
+  return { warnings, repoResults };
 }
 
-export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
+export async function fetchDataset(db: SqliteDatabase, request: FetchRequest, options: FetchDatasetOptions = {}) {
+  const logger = options.logger;
   const normalizedRequest: FetchRequest = {
     ...request,
     sourceConfig: normalizeSourceConfig(request.sourceConfig),
@@ -103,6 +180,17 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
       .filter((item) => item.source === "discourse")
       .map((item) => [item.itemKey, item]),
   );
+  const previousGitHubItemsByRepo = new Map<string, ActivityItem[]>();
+  for (const item of previousDataset?.items ?? []) {
+    const repoKey = buildGitHubRepoKey(item);
+    if (!repoKey) {
+      continue;
+    }
+
+    const group = previousGitHubItemsByRepo.get(repoKey) ?? [];
+    group.push(item);
+    previousGitHubItemsByRepo.set(repoKey, group);
+  }
   const previousForumItemsByForum = new Map<string, ActivityItem[]>();
   for (const item of previousForumItems.values()) {
     if (item.sourceMeta.source !== "discourse") {
@@ -114,7 +202,7 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
   }
 
   const [githubResult, forumResults] = await Promise.all([
-    fetchGitHubActivity(normalizedRequest),
+    fetchGitHubActivity(normalizedRequest, logger),
     Promise.allSettled(
       normalizedRequest.sourceConfig.forums.map((forum) =>
         fetchDiscourseForumActivity(forum, normalizedRequest.fetchWindow),
@@ -123,7 +211,43 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
   ]);
 
   dataset.warnings.push(...githubResult.warnings);
-  dataset.items.push(...githubResult.items.map((item) => finalizeItem(db, item, normalizedRequest.scoringWeights)));
+  for (const repoResult of githubResult.repoResults) {
+    dataset.warnings.push(...repoResult.warnings);
+
+    if (repoResult.status === "success") {
+      dataset.items.push(...repoResult.items.map((item) => finalizeItem(db, item, normalizedRequest.scoringWeights)));
+      continue;
+    }
+
+    const previousItemsForRepo = previousGitHubItemsByRepo.get(repoResult.repo) ?? [];
+    if (previousItemsForRepo.length > 0) {
+      dataset.items.push(
+        ...previousItemsForRepo.map((item) => {
+          const reusedItem = toRawItem(item);
+          reusedItem.warnings = Array.from(new Set([
+            ...reusedItem.warnings,
+            "Showing previously cached GitHub content because latest refresh failed.",
+          ]));
+          return finalizeItem(db, reusedItem, normalizedRequest.scoringWeights);
+        }),
+      );
+    }
+
+    logger?.warn(
+      {
+        repo: repoResult.repo,
+        reusedItemCount: previousItemsForRepo.length,
+        warningCount: repoResult.warnings.length,
+      },
+      "Reused cached GitHub repo content after fetch failure",
+    );
+    dataset.warnings.push(
+      createWarning(
+        repoResult.repo,
+        `GitHub fetch failed for ${repoResult.repo}; reused cached GitHub data when available.${repoResult.errorMessage ? ` ${repoResult.errorMessage}` : ""}`,
+      ),
+    );
+  }
 
   for (const [index, result] of forumResults.entries()) {
     const forumUrl = normalizedRequest.sourceConfig.forums[index]?.replace(/\/+$/, "");
@@ -132,6 +256,14 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
     }
 
     if (result.status === "fulfilled") {
+      logger?.info(
+        {
+          forumUrl,
+          itemCount: result.value.items.length,
+          warningCount: result.value.warnings.length,
+        },
+        "Fetched forum activity",
+      );
       dataset.warnings.push(...result.value.warnings);
       for (const item of result.value.items) {
         const previousItem = previousForumItems.get(item.itemKey);
@@ -145,6 +277,13 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
             ...item.warnings,
             "Showing previously cached forum content because the latest topic refresh was degraded.",
           ]));
+          logger?.warn(
+            {
+              forumUrl,
+              itemKey: previousItem.itemKey,
+            },
+            "Reused cached forum topic after degraded response",
+          );
           dataset.items.push(finalizeItem(db, reusedItem, normalizedRequest.scoringWeights));
           dataset.warnings.push(createWarning(forumUrl, `Reused cached content for topic ${previousItem.sourceMeta.source === "discourse" ? previousItem.sourceMeta.topicId : "unknown"} after a degraded forum response.`));
           continue;
@@ -166,6 +305,14 @@ export async function fetchDataset(db: SqliteDatabase, request: FetchRequest) {
           }),
         );
       }
+      logger?.warn(
+        {
+          forumUrl,
+          reusedItemCount: previousItemsForForum.length,
+          errorMessage: (result.reason as Error)?.message ?? "Unknown fetch error",
+        },
+        "Forum fetch failed; reused cached content when available",
+      );
       dataset.warnings.push(createWarning(forumUrl, `Forum fetch failed for ${forumUrl}; reused cached forum data when available. ${(result.reason as Error)?.message ?? "Unknown fetch error"}`));
     }
   }
