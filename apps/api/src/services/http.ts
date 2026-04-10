@@ -81,6 +81,7 @@ export async function fetchJson<T>(url: string, options: FetchJsonOptions = {}):
     ...options,
     headers: {
       Accept: "application/vnd.github+json, application/json",
+      "User-Agent": "weekly-fetcher-api",
       ...(options.headers ?? {}),
     },
   });

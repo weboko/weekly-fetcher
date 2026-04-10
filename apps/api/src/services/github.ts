@@ -116,6 +116,19 @@ function githubHeaders(token?: string): Record<string, string> {
       };
 }
 
+
+function getGitHubApiBaseUrl(): string {
+  const configured = process.env.GITHUB_API_BASE_URL?.trim();
+  if (!configured) {
+    return "https://api.github.com";
+  }
+  return configured.replace(/\/+$/, "");
+}
+
+function githubApiUrl(path: string): string {
+  return `${getGitHubApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 function shouldStopPaging(updatedAt: string, window: FetchWindow): boolean {
   return new Date(updatedAt).getTime() < new Date(`${window.startDate}T00:00:00Z`).getTime();
 }
@@ -274,7 +287,7 @@ async function listOrganizationRepositories(org: string, token: string): Promise
 
   for (let page = 1; ; page += 1) {
     const pageResults = await fetchJson<GitHubOrgRepoListEntry[]>(
-      `https://api.github.com/orgs/${org}/repos?type=public&sort=updated&per_page=100&page=${page}`,
+      githubApiUrl(`/orgs/${org}/repos?type=public&sort=updated&per_page=100&page=${page}`),
       { headers: githubHeaders(token) },
     );
 
@@ -336,12 +349,12 @@ export async function fetchGitHubRepoActivity(
   const [owner, repo] = repoFullName.split("/");
 
   const pulls = await paginateList<GitHubPullListEntry>(
-    (page) => `https://api.github.com/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=25&page=${page}`,
+    (page) => githubApiUrl(`/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=25&page=${page}`),
     window,
     token,
   );
   const issues = await paginateList<GitHubIssueListEntry>(
-    (page) => `https://api.github.com/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=25&page=${page}`,
+    (page) => githubApiUrl(`/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=25&page=${page}`),
     window,
     token,
   );
@@ -352,11 +365,11 @@ export async function fetchGitHubRepoActivity(
   for (const pull of pullCandidates) {
     try {
       const [pullDetail, issueDetail, issueComments, reviewComments, timeline] = await Promise.all([
-        fetchJson<GitHubPullDetail>(`https://api.github.com/repos/${owner}/${repo}/pulls/${pull.number}`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubIssueDetail>(`https://api.github.com/repos/${owner}/${repo}/issues/${pull.number}`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubComment[]>(`https://api.github.com/repos/${owner}/${repo}/issues/${pull.number}/comments?per_page=20`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubComment[]>(`https://api.github.com/repos/${owner}/${repo}/pulls/${pull.number}/comments?per_page=20`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubTimelineEvent[]>(`https://api.github.com/repos/${owner}/${repo}/issues/${pull.number}/timeline?per_page=100`, { headers: githubHeaders(token) }),
+        fetchJson<GitHubPullDetail>(githubApiUrl(`/repos/${owner}/${repo}/pulls/${pull.number}`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubIssueDetail>(githubApiUrl(`/repos/${owner}/${repo}/issues/${pull.number}`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubComment[]>(githubApiUrl(`/repos/${owner}/${repo}/issues/${pull.number}/comments?per_page=20`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubComment[]>(githubApiUrl(`/repos/${owner}/${repo}/pulls/${pull.number}/comments?per_page=20`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubTimelineEvent[]>(githubApiUrl(`/repos/${owner}/${repo}/issues/${pull.number}/timeline?per_page=100`), { headers: githubHeaders(token) }),
       ]);
 
       const linkedItems = new Set<string>(extractTextualLinks(`${pullDetail.body ?? ""}\n${issueComments.map((comment) => comment.body ?? "").join("\n")}`, owner, repo));
@@ -439,9 +452,9 @@ export async function fetchGitHubRepoActivity(
   for (const issue of issueCandidates) {
     try {
       const [detail, comments, timeline] = await Promise.all([
-        fetchJson<GitHubIssueDetail>(`https://api.github.com/repos/${owner}/${repo}/issues/${issue.number}`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubComment[]>(`https://api.github.com/repos/${owner}/${repo}/issues/${issue.number}/comments?per_page=20`, { headers: githubHeaders(token) }),
-        fetchJson<GitHubTimelineEvent[]>(`https://api.github.com/repos/${owner}/${repo}/issues/${issue.number}/timeline?per_page=100`, { headers: githubHeaders(token) }),
+        fetchJson<GitHubIssueDetail>(githubApiUrl(`/repos/${owner}/${repo}/issues/${issue.number}`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubComment[]>(githubApiUrl(`/repos/${owner}/${repo}/issues/${issue.number}/comments?per_page=20`), { headers: githubHeaders(token) }),
+        fetchJson<GitHubTimelineEvent[]>(githubApiUrl(`/repos/${owner}/${repo}/issues/${issue.number}/timeline?per_page=100`), { headers: githubHeaders(token) }),
       ]);
 
       const linkedItems = new Set<string>(extractTextualLinks(`${detail.body ?? ""}\n${comments.map((comment) => comment.body ?? "").join("\n")}`, owner, repo));

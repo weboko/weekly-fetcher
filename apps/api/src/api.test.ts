@@ -10,6 +10,7 @@ import { getSettings, replaceDataset } from "./services/store";
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("github link extraction", () => {
@@ -44,6 +45,10 @@ describe("github target parsing", () => {
     expect(parseGitHubTarget("logos/weekly-fetcher")).toMatchObject({
       kind: "repo",
       repoFullName: "logos/weekly-fetcher",
+    });
+    expect(parseGitHubTarget("logos-co/logos-scaffold")).toMatchObject({
+      kind: "repo",
+      repoFullName: "logos-co/logos-scaffold",
     });
     expect(parseGitHubTarget("org:logos")).toEqual({
       kind: "org",
@@ -97,6 +102,39 @@ describe("github target resolution", () => {
 
     expect(result.warnings).toEqual([]);
     expect(result.repos).toEqual(["logos/weekly-fetcher"]);
+  });
+
+  it("uses GITHUB_API_BASE_URL when expanding org targets", async () => {
+    const customBase = "https://github-proxy.example.test/api/v3";
+    vi.stubEnv("GITHUB_API_BASE_URL", customBase);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        const parsedUrl = new URL(url);
+        const page = parsedUrl.searchParams.get("page");
+
+        if (url.startsWith(customBase) && parsedUrl.pathname === "/api/v3/orgs/logos-co/repos" && page === "1") {
+          return new Response(
+            JSON.stringify([{ full_name: "logos-co/logos-scaffold", private: false, fork: false, archived: false }]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
+        if (url.startsWith(customBase) && parsedUrl.pathname === "/api/v3/orgs/logos-co/repos" && page === "2") {
+          return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+
+        throw new Error(`Unexpected URL ${url}`);
+      }),
+    );
+
+    const targets = [parseGitHubTarget("org:logos-co")].filter((target): target is NonNullable<typeof target> => target !== null);
+    const result = await resolveGitHubTargets(targets, "token");
+
+    expect(result.warnings).toEqual([]);
+    expect(result.repos).toEqual(["logos-co/logos-scaffold"]);
   });
 });
 
